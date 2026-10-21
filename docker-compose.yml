@@ -1,6 +1,6 @@
 services:
   wedding-planner:
-    build: https://github.com/Plungis/Wedding-Planner.git#main
+    build: .
     container_name: vowcraft-wedding-planner
     restart: unless-stopped
     ports:
