@@ -1,0 +1,9 @@
+{
+  "name": "VowCraft Modular Wedding Planner",
+  "short_name": "VowCraft",
+  "description": "All-encapsulating modular wedding planner with customizable checklists, vendor details, and invite list management.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf7f2",
+  "theme_color": "#2d4739"
+}

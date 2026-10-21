@@ -1,0 +1,16 @@
+services:
+  wedding-planner:
+    build: https://github.com/Plungis/Wedding-Planner.git#main
+    container_name: vowcraft-wedding-planner
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATA_DIR=/app/data
+    volumes:
+      - wedding_data:/app/data
+
+volumes:
+  wedding_data:

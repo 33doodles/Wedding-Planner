@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#2d4739" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>VowCraft — Modular Wedding Planner</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Desktop Sidebar / Mobile Header -->
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-logo">💍</div>
+        <div>
+          <h1 class="brand-title">VowCraft</h1>
+          <span class="beta-badge">BETA v0.9 • MODULAR</span>
+        </div>
+      </div>
+
+      <div class="couple-card" id="sidebarCoupleCard">
+        <div class="couple-names" id="sidebarCoupleNames">Alex & Jordan</div>
+        <div class="couple-meta" id="sidebarWeddingDate">June 19, 2027 • Savannah, GA</div>
+        <div class="countdown-pill" id="sidebarCountdown">Loading countdown...</div>
+      </div>
+
+      <nav class="desktop-nav" aria-label="Primary Navigation">
+        <button class="nav-btn active" data-tab="overview">
+          <span class="nav-icon">✨</span>
+          <span>Overview & Style</span>
+        </button>
+        <button class="nav-btn" data-tab="modules">
+          <span class="nav-icon">🏛️</span>
+          <span>Vendors & Prep</span>
+          <span class="nav-pill" id="navActiveModulesCount">0/0</span>
+        </button>
+        <button class="nav-btn" data-tab="checklist">
+          <span class="nav-icon">☑️</span>
+          <span>Master Checklist</span>
+          <span class="nav-pill" id="navChecklistProgress">0%</span>
+        </button>
+        <button class="nav-btn" data-tab="guests">
+          <span class="nav-icon">💌</span>
+          <span>Invite & Guest List</span>
+          <span class="nav-pill" id="navGuestCount">0</span>
+        </button>
+        <button class="nav-btn" data-tab="settings">
+          <span class="nav-icon">⚙️</span>
+          <span>Export & Settings</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sync-status" id="syncStatusIndicator">
+          <span class="status-dot online"></span>
+          <span id="syncStatusText">Synced with server</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="main-content">
+      <!-- Top Mobile Bar -->
+      <header class="mobile-topbar">
+        <div class="mobile-brand">
+          <span>💍</span>
+          <strong id="mobileCoupleTitle">Alex & Jordan</strong>
+        </div>
+        <div class="mobile-topbar-right">
+          <span class="countdown-mini" id="mobileCountdown">-- days</span>
+          <span class="status-dot online" id="mobileSyncDot" title="Saved"></span>
+        </div>
+      </header>
+
+      <!-- TAB 1: OVERVIEW & STYLE CUSTOMIZER -->
+      <section class="tab-panel active" id="tab-overview">
+        <div class="hero-banner">
+          <div class="hero-text">
+            <span class="eyebrow">YOUR WEDDING BLUEPRINT</span>
+            <h2 id="heroCoupleHeading">Alex & Jordan's Wedding</h2>
+            <p id="heroSubheading">Customize your wedding style below. Toggle off any vendor or tradition you don't need—disabled modules automatically grey out and won't clutter your progress or budget.</p>
+          </div>
+          <div class="hero-quick-edit">
+            <button class="btn btn-secondary" id="openQuickProfileBtn">✎ Edit Wedding Details</button>
+          </div>
+        </div>
+
+        <!-- KPI Metrics Grid -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Preparation Progress</div>
+            <div class="kpi-value" id="kpiChecklistPercent">0%</div>
+            <div class="progress-bar"><div class="progress-fill" id="kpiChecklistBar" style="width: 0%"></div></div>
+            <div class="kpi-sub" id="kpiChecklistSub">0 of 0 active tasks done</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-label">Active Budget (Enabled Only)</div>
+            <div class="kpi-value" id="kpiBudgetActual">$0</div>
+            <div class="progress-bar"><div class="progress-fill accent" id="kpiBudgetBar" style="width: 0%"></div></div>
+            <div class="kpi-sub" id="kpiBudgetSub">Allocated: $0 • Cap: $0</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-label">Guest List & RSVPs</div>
+            <div class="kpi-value" id="kpiGuestAttending">0</div>
+            <div class="kpi-badges" id="kpiGuestBreakdown">
+              <span class="badge success">0 Attending</span>
+              <span class="badge warning">0 Pending</span>
+              <span class="badge neutral">0 Declined</span>
+            </div>
+            <div class="kpi-sub" id="kpiGuestSub">Target capacity: 120 guests</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-label">Active Modules</div>
+            <div class="kpi-value" id="kpiModulesRatio">0 / 0</div>
+            <div class="kpi-sub" id="kpiModulesSub">0 greyed-out / skipped modules</div>
+            <label class="toggle-inline mt-sm">
+              <input type="checkbox" id="hideDisabledToggle" />
+              <span>Hide greyed-out modules completely</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Wedding Style Preset Selector -->
+        <div class="card section-card">
+          <div class="section-header">
+            <div>
+              <h3>1. Choose a Wedding Style Preset (Or Customize Below)</h3>
+              <p class="text-muted">Selecting a preset automatically enables common modules and greys out ones you probably don't need—without deleting any of your saved notes.</p>
+            </div>
+          </div>
+          <div class="preset-grid" id="presetSelectorGrid"></div>
+        </div>
+
+        <!-- Module Matrix Quick-Toggler -->
+        <div class="card section-card">
+          <div class="section-header">
+            <div>
+              <h3>2. Modular Parts of Your Wedding</h3>
+              <p class="text-muted">Don't want a photographer, transportation, or a cake? Flip its switch off to grey it out. Click any card to fill in vendor details and checklists.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" id="addCustomModuleBtn">+ Add Custom Module</button>
+          </div>
+          <div class="module-overview-grid" id="overviewModuleGrid"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: MODULAR PREPARATION & VENDOR WORKSHEETS -->
+      <section class="tab-panel" id="tab-modules">
+        <div class="panel-header">
+          <div>
+            <h2>Vendor & Preparation Worksheets</h2>
+            <p class="text-muted">Fill in contacts, pricing, contracts, and logistical details for each part of your wedding. Greyed-out modules stay safely stored at the bottom in case you change your mind.</p>
+          </div>
+          <div class="panel-actions">
+            <label class="toggle-inline">
+              <input type="checkbox" id="hideDisabledModulesTabToggle" />
+              <span>Hide greyed-out modules</span>
+            </label>
+            <button class="btn btn-primary" id="addCustomModuleBtn2">+ Add Module</button>
+          </div>
+        </div>
+
+        <!-- Category Filter Pills -->
+        <div class="filter-bar" id="moduleFilterBar"></div>
+
+        <!-- Modules Detail Accordion / Cards -->
+        <div class="modules-detail-list" id="modulesDetailList"></div>
+      </section>
+
+      <!-- TAB 3: MASTER CHECKLIST -->
+      <section class="tab-panel" id="tab-checklist">
+        <div class="panel-header">
+          <div>
+            <h2>Master Wedding Checklist</h2>
+            <p class="text-muted">Every preparation step across your wedding. Individual items or entire vendor categories can be greyed out ("Not Needed / Skipped") so your completion score stays accurate.</p>
+          </div>
+        </div>
+
+        <div class="checklist-controls card">
+          <div class="search-group">
+            <input type="search" id="checklistSearchInput" class="input" placeholder="Search checklist tasks or notes..." />
+          </div>
+          <div class="filter-group">
+            <select id="checklistStatusFilter" class="input">
+              <option value="all">All Tasks</option>
+              <option value="remaining">Remaining (To-Do)</option>
+              <option value="completed">Completed</option>
+              <option value="skipped">Greyed Out / Skipped</option>
+            </select>
+            <select id="checklistGroupMode" class="input">
+              <option value="timeline">Group by Timeline Phase</option>
+              <option value="module">Group by Wedding Module</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="masterChecklistContainer" class="checklist-groups"></div>
+      </section>
+
+      <!-- TAB 4: INVITE & GUEST LIST -->
+      <section class="tab-panel" id="tab-guests">
+        <div class="panel-header">
+          <div>
+            <h2>Invite List & RSVP Manager</h2>
+            <p class="text-muted">Track households, party headcount, Save-the-Dates, formal invitations, meal choices, dietary restrictions, and table assignments.</p>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-secondary" id="exportGuestsCsvBtn">⬇ Export CSV</button>
+            <button class="btn btn-primary" id="openAddGuestModalBtn">+ Add Guest / Household</button>
+          </div>
+        </div>
+
+        <div class="guest-stats-bar card" id="guestStatsSummary"></div>
+
+        <div class="guest-controls card">
+          <input type="search" id="guestSearchInput" class="input" placeholder="Search by guest name, table, dietary need, or email..." />
+          <div class="filter-group">
+            <select id="guestRsvpFilter" class="input">
+              <option value="all">All RSVP Statuses</option>
+              <option value="attending">Attending</option>
+              <option value="pending">Awaiting RSVP</option>
+              <option value="declined">Declined (Greyed Out)</option>
+            </select>
+            <select id="guestGroupFilter" class="input">
+              <option value="all">All Groups</option>
+              <option value="Immediate Family">Immediate Family</option>
+              <option value="Extended Family">Extended Family</option>
+              <option value="Wedding Party">Wedding Party</option>
+              <option value="Friends">Friends</option>
+              <option value="Coworkers / Plus Ones">Coworkers / Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="guest-list-container" id="guestListContainer"></div>
+      </section>
+
+      <!-- TAB 5: SETTINGS & BACKUP -->
+      <section class="tab-panel" id="tab-settings">
+        <div class="panel-header">
+          <div>
+            <h2>Wedding Profile, Backup & Portability</h2>
+            <p class="text-muted">Configure your core wedding details, download a full JSON backup, or restore from a file.</p>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="card section-card">
+            <h3>Couple & Event Details</h3>
+            <form id="weddingProfileForm" class="form-stack">
+              <div class="form-row">
+                <label>Couple Names</label>
+                <input type="text" id="metaCoupleNames" class="input" required />
+              </div>
+              <div class="form-row-split">
+                <div class="form-row">
+                  <label>Wedding Date</label>
+                  <input type="date" id="metaWeddingDate" class="input" />
+                </div>
+                <div class="form-row">
+                  <label>City / Location</label>
+                  <input type="text" id="metaLocationCity" class="input" />
+                </div>
+              </div>
+              <div class="form-row-split">
+                <div class="form-row">
+                  <label>Total Estimated Budget ($)</label>
+                  <input type="number" id="metaEstimatedBudget" class="input" min="0" step="100" />
+                </div>
+                <div class="form-row">
+                  <label>Target Guest Capacity</label>
+                  <input type="number" id="metaTargetGuestCount" class="input" min="1" />
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary">Save Wedding Profile</button>
+            </form>
+          </div>
+
+          <div class="card section-card">
+            <h3>Data Export, Import & Reset</h3>
+            <p class="text-muted mb-md">All changes automatically sync to the backend Docker volume (`data/wedding-data.json`) and browser storage. You can also export snapshots anytime.</p>
+            <div class="button-stack">
+              <button type="button" class="btn btn-secondary" id="downloadJsonBackupBtn">⬇ Download Full Wedding Backup (.json)</button>
+              <label class="btn btn-secondary file-upload-btn">
+                ⬆ Restore From Backup (.json)
+                <input type="file" id="uploadJsonBackupInput" accept=".json" hidden />
+              </label>
+              <button type="button" class="btn btn-secondary" id="printSummaryBtn">🖨️ Print / Save PDF Day-Of Cheat Sheet</button>
+              <hr class="divider" />
+              <button type="button" class="btn btn-danger" id="resetDemoDataBtn">↺ Reset to Default Demo Data</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Mobile Bottom Navigation Bar -->
+    <nav class="mobile-bottom-nav" aria-label="Mobile Navigation">
+      <button class="mob-nav-btn active" data-tab="overview">
+        <span class="mob-icon">✨</span>
+        <span class="mob-label">Overview</span>
+      </button>
+      <button class="mob-nav-btn" data-tab="modules">
+        <span class="mob-icon">🏛️</span>
+        <span class="mob-label">Prep & Vendors</span>
+      </button>
+      <button class="mob-nav-btn" data-tab="checklist">
+        <span class="mob-icon">☑️</span>
+        <span class="mob-label">Checklist</span>
+      </button>
+      <button class="mob-nav-btn" data-tab="guests">
+        <span class="mob-icon">💌</span>
+        <span class="mob-label">Invites</span>
+      </button>
+      <button class="mob-nav-btn" data-tab="settings">
+        <span class="mob-icon">⚙️</span>
+        <span class="mob-label">Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- MODAL: ADD / EDIT GUEST -->
+  <div class="modal-backdrop hidden" id="guestModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="guestModalTitle">Add Guest / Household</h3>
+        <button class="icon-btn" id="closeGuestModalBtn" aria-label="Close">✕</button>
+      </div>
+      <form id="guestForm" class="form-stack">
+        <input type="hidden" id="guestIdInput" />
+        <div class="form-row">
+          <label>Guest or Household Name *</label>
+          <input type="text" id="guestNameInput" class="input" placeholder="e.g., Jordan & Taylor Reed" required />
+        </div>
+        <div class="form-row-split">
+          <div class="form-row">
+            <label>Party Size (Headcount)</label>
+            <input type="number" id="guestPartySizeInput" class="input" min="1" max="20" value="2" required />
+          </div>
+          <div class="form-row">
+            <label>RSVP Status</label>
+            <select id="guestRsvpInput" class="input">
+              <option value="pending">Awaiting RSVP</option>
+              <option value="attending">Attending</option>
+              <option value="declined">Declined (Greyed Out)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row-split">
+          <div class="form-row">
+            <label>Side / Affiliation</label>
+            <select id="guestSideInput" class="input">
+              <option value="Partner A">Partner A</option>
+              <option value="Partner B">Partner B</option>
+              <option value="Mutual">Mutual</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Relationship Group</label>
+            <select id="guestGroupInput" class="input">
+              <option value="Immediate Family">Immediate Family</option>
+              <option value="Extended Family">Extended Family</option>
+              <option value="Wedding Party">Wedding Party</option>
+              <option value="Friends">Friends</option>
+              <option value="Coworkers / Plus Ones">Coworkers / Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row-split">
+          <div class="form-row">
+            <label>Meal Selections</label>
+            <input type="text" id="guestMealInput" class="input" placeholder="e.g., 1x Beef, 1x Fish" />
+          </div>
+          <div class="form-row">
+            <label>Table Assignment</label>
+            <input type="text" id="guestTableInput" class="input" placeholder="e.g., Table 4 or Head Table" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Dietary Restrictions / Allergies</label>
+          <input type="text" id="guestDietaryInput" class="input" placeholder="e.g., Gluten-free, Nut allergy" />
+        </div>
+        <div class="form-row-split">
+          <div class="form-row">
+            <label>Email / Phone</label>
+            <input type="text" id="guestEmailInput" class="input" placeholder="guest@example.com" />
+          </div>
+          <div class="form-row">
+            <label>Mailing Address</label>
+            <input type="text" id="guestAddressInput" class="input" placeholder="Street, City, State, ZIP" />
+          </div>
+        </div>
+        <div class="checkbox-row">
+          <label class="toggle-inline"><input type="checkbox" id="guestStdInput" /> <span>Save-the-Date Sent</span></label>
+          <label class="toggle-inline"><input type="checkbox" id="guestInviteInput" /> <span>Formal Invite Sent</span></label>
+          <label class="toggle-inline"><input type="checkbox" id="guestThankYouInput" /> <span>Thank You Sent</span></label>
+        </div>
+        <div class="form-row">
+          <label>Notes / Gift Received</label>
+          <input type="text" id="guestNotesInput" class="input" placeholder="Hotel block, highchair needed, gift note..." />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="cancelGuestModalBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Guest</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: ADD CUSTOM MODULE -->
+  <div class="modal-backdrop hidden" id="customModuleModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Add Custom Wedding Module</h3>
+        <button class="icon-btn" id="closeCustomModuleModalBtn" aria-label="Close">✕</button>
+      </div>
+      <form id="customModuleForm" class="form-stack">
+        <div class="form-row-split">
+          <div class="form-row">
+            <label>Module Name *</label>
+            <input type="text" id="customModName" class="input" placeholder="e.g., Photo Booth, Rehearsal Dinner, Cultural Tea Ceremony" required />
+          </div>
+          <div class="form-row">
+            <label>Icon Emoji</label>
+            <input type="text" id="customModIcon" class="input" value="✨" maxlength="4" />
+          </div>
+        </div>
+        <div class="form-row-split">
+          <div class="form-row">
+            <label>Category</label>
+            <select id="customModCategory" class="input">
+              <option value="Foundation">Foundation</option>
+              <option value="Food & Drink">Food & Drink</option>
+              <option value="Media">Media</option>
+              <option value="Atmosphere">Atmosphere</option>
+              <option value="Personal">Personal</option>
+              <option value="Guest Experience">Guest Experience</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Allocated Budget ($)</label>
+            <input type="number" id="customModBudget" class="input" value="500" min="0" />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="cancelCustomModuleBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Module</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
