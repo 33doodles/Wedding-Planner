@@ -1,18 +1,32 @@
 const express = require('express');
-const cors = require('cors');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { version } = require('./package.json');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'wedding-data.json');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const SECRET_FILE = path.join(DATA_DIR, '.session-secret');
 
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Optional single shared password. Leave unset to run without a login
+// (only do that on a trusted network or behind a reverse proxy with auth).
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const SESSION_DAYS = Number(process.env.SESSION_DAYS) || 30;
+// First run only: start with the demo wedding ("true") or a blank plan ("false").
+const SEED_SAMPLE_DATA = process.env.SEED_SAMPLE_DATA !== 'false';
+// Rotating snapshots of the data file, taken at most every BACKUP_INTERVAL_MINUTES.
+const BACKUP_KEEP = Number(process.env.BACKUP_KEEP) || 20;
+const BACKUP_INTERVAL_MS = (Number(process.env.BACKUP_INTERVAL_MINUTES) || 10) * 60 * 1000;
+// Set to the number of reverse proxies in front of the app (e.g. 1) so that
+// client IPs (login rate limit) and HTTPS (Secure cookie) are detected correctly.
+if (process.env.TRUST_PROXY) {
+  const tp = process.env.TRUST_PROXY;
+  app.set('trust proxy', /^\d+$/.test(tp) ? Number(tp) : tp === 'true' ? true : tp);
+}
 
-// Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -446,61 +460,375 @@ function createDefaultState() {
   };
 }
 
-function loadState() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) {
-      const initial = createDefaultState();
-      fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2), 'utf8');
-      return initial;
+// ---------------------------------------------------------------------------
+// Blank plan: same modules, fields and checklist titles, nothing filled in
+// ---------------------------------------------------------------------------
+function createBlankState() {
+  const demo = createDefaultState();
+  return {
+    meta: {
+      ...demo.meta,
+      coupleNames: 'Partner A & Partner B',
+      weddingDate: '',
+      locationCity: '',
+      estimatedBudget: 0,
+      targetGuestCount: 100
+    },
+    templates: demo.templates,
+    modules: demo.modules.map((mod) => ({
+      ...mod,
+      budgetAllocated: 0,
+      actualCost: 0,
+      depositPaid: false,
+      contractSigned: false,
+      fields: mod.fields.map((f) => ({ ...f, value: '' })),
+      checklist: mod.checklist.map((t) => ({ ...t, completed: false, skipped: false, notes: '' }))
+    })),
+    guests: []
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Validation: reject payloads that would break the UI on every device
+// ---------------------------------------------------------------------------
+const FIELD_TYPES = new Set(['text', 'textarea', 'select', 'date', 'number', 'email', 'tel', 'url', 'time']);
+const RSVP_STATUSES = new Set(['attending', 'pending', 'declined']);
+
+function validateState(s) {
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const optStr = (v) => v === undefined || v === null || typeof v === 'string';
+  const optStrNum = (v) => optStr(v) || (typeof v === 'number' && Number.isFinite(v));
+  const optNum = (v) => v === undefined || v === null || v === '' || Number.isFinite(Number(v));
+  const optBool = (v) => v === undefined || typeof v === 'boolean';
+  const str = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
+
+  if (!isObj(s)) return 'State must be an object';
+  if (!isObj(s.meta)) return 'meta must be an object';
+  for (const k of ['coupleNames', 'weddingDate', 'weddingType', 'locationCity', 'locale', 'currency']) {
+    if (!optStr(s.meta[k])) return `meta.${k} must be a string`;
+  }
+  for (const k of ['estimatedBudget', 'targetGuestCount']) {
+    if (!optNum(s.meta[k])) return `meta.${k} must be a number`;
+  }
+  if (s.templates !== undefined && !isObj(s.templates)) return 'templates must be an object';
+  for (const [id, tpl] of Object.entries(s.templates || {})) {
+    if (!isObj(tpl) || !Array.isArray(tpl.enabledModules) || !tpl.enabledModules.every((x) => typeof x === 'string')) {
+      return `templates.${id} is invalid`;
     }
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    return JSON.parse(raw);
+  }
+
+  if (!Array.isArray(s.modules) || s.modules.length > 200) return 'modules must be an array (max 200)';
+  const modIds = new Set();
+  for (const [i, m] of s.modules.entries()) {
+    const at = `modules[${i}]`;
+    if (!isObj(m)) return `${at} must be an object`;
+    if (!str(m.id)) return `${at}.id is required`;
+    if (modIds.has(m.id)) return `${at}.id "${m.id}" is duplicated`;
+    modIds.add(m.id);
+    if (typeof m.name !== 'string') return `${at}.name must be a string`;
+    if (!optStr(m.icon) || !optStr(m.category)) return `${at}.icon/category must be strings`;
+    if (!optBool(m.enabled) || !optBool(m.depositPaid) || !optBool(m.contractSigned)) return `${at} flags must be true/false`;
+    if (!optNum(m.budgetAllocated) || !optNum(m.actualCost)) return `${at} budget values must be numbers`;
+    if (!Array.isArray(m.fields)) return `${at}.fields must be an array`;
+    for (const [j, f] of m.fields.entries()) {
+      if (!isObj(f) || typeof f.key !== 'string' || typeof f.label !== 'string') return `${at}.fields[${j}] needs a key and label`;
+      if (f.type !== undefined && !FIELD_TYPES.has(f.type)) return `${at}.fields[${j}].type "${f.type}" is not supported`;
+      if (!optStrNum(f.value) || !optStr(f.placeholder)) return `${at}.fields[${j}] value/placeholder must be text`;
+      if (f.options !== undefined && (!Array.isArray(f.options) || !f.options.every((o) => typeof o === 'string'))) {
+        return `${at}.fields[${j}].options must be a list of strings`;
+      }
+    }
+    if (!Array.isArray(m.checklist)) return `${at}.checklist must be an array`;
+    for (const [j, t] of m.checklist.entries()) {
+      if (!isObj(t) || !str(t.id) || typeof t.title !== 'string') return `${at}.checklist[${j}] needs an id and title`;
+      if (!optStr(t.timeline) || !optStr(t.notes) || !optBool(t.completed) || !optBool(t.skipped)) {
+        return `${at}.checklist[${j}] has invalid values`;
+      }
+    }
+  }
+
+  if (s.guests !== undefined && !Array.isArray(s.guests)) return 'guests must be an array';
+  for (const [i, g] of (s.guests || []).entries()) {
+    const at = `guests[${i}]`;
+    if (!isObj(g) || !str(g.id) || typeof g.name !== 'string') return `${at} needs an id and name`;
+    if (g.rsvpStatus !== undefined && !RSVP_STATUSES.has(g.rsvpStatus)) return `${at}.rsvpStatus is invalid`;
+    if (!optNum(g.partySize)) return `${at}.partySize must be a number`;
+    for (const k of ['side', 'group', 'mealChoice', 'dietary', 'tableNumber', 'email', 'address', 'notes']) {
+      if (!optStrNum(g[k])) return `${at}.${k} must be text`;
+    }
+    for (const k of ['plusOneAllowed', 'saveTheDateSent', 'inviteSent', 'thankYouSent']) {
+      if (!optBool(g[k])) return `${at}.${k} must be true/false`;
+    }
+  }
+  return null;
+}
+
+function normalise(s) {
+  s.meta.revision = Number.isInteger(s.meta.revision) ? s.meta.revision : 0;
+  s.meta.locale = s.meta.locale || 'en-US';
+  s.meta.currency = s.meta.currency || 'USD';
+  s.templates = s.templates || {};
+  s.guests = s.guests || [];
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// Storage: atomic writes, rotating snapshots, never overwrite a corrupt file
+// ---------------------------------------------------------------------------
+function writeAtomic(file, data, mode) {
+  const tmp = `${file}.tmp-${process.pid}`;
+  const fd = fs.openSync(tmp, 'w', mode);
+  try {
+    fs.writeSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmp, file);
+}
+
+function listBackups() {
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+  return fs
+    .readdirSync(BACKUP_DIR)
+    .filter((f) => /^wedding-data-.*\.json$/.test(f))
+    .sort()
+    .reverse()
+    .map((f) => path.join(BACKUP_DIR, f));
+}
+
+let lastBackupAt = 0;
+function snapshot(reason, force = false) {
+  if (!fs.existsSync(DATA_FILE)) return;
+  if (!force && Date.now() - lastBackupAt < BACKUP_INTERVAL_MS) return;
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.copyFileSync(DATA_FILE, path.join(BACKUP_DIR, `wedding-data-${stamp}-${reason}.json`));
+  lastBackupAt = Date.now();
+  for (const old of listBackups().slice(BACKUP_KEEP)) fs.unlinkSync(old);
+}
+
+function readValidFile(file) {
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const problem = validateState(parsed);
+  if (problem) throw new Error(problem);
+  return normalise(parsed);
+}
+
+function loadInitialState() {
+  if (!fs.existsSync(DATA_FILE)) {
+    const initial = normalise(SEED_SAMPLE_DATA ? createDefaultState() : createBlankState());
+    writeAtomic(DATA_FILE, JSON.stringify(initial, null, 2));
+    console.log(`Created ${DATA_FILE} (${SEED_SAMPLE_DATA ? 'demo data' : 'blank plan'})`);
+    return initial;
+  }
+  try {
+    return readValidFile(DATA_FILE);
   } catch (err) {
-    console.error('Error loading state, falling back to default:', err);
-    return createDefaultState();
+    const keep = `${DATA_FILE}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    fs.copyFileSync(DATA_FILE, keep);
+    console.error(`ERROR: ${DATA_FILE} could not be loaded (${err.message}). A copy was kept at ${keep}.`);
+    for (const backup of listBackups()) {
+      try {
+        const restored = readValidFile(backup);
+        writeAtomic(DATA_FILE, JSON.stringify(restored, null, 2));
+        console.error(`Restored the newest valid snapshot: ${backup}`);
+        return restored;
+      } catch (e) {
+        console.error(`Snapshot ${backup} is not usable either (${e.message})`);
+      }
+    }
+    console.error('No valid snapshot found. Refusing to start so the data file is not overwritten.');
+    process.exit(1);
   }
 }
 
-function saveState(state) {
-  state.meta.lastUpdated = new Date().toISOString();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2), 'utf8');
+let state = loadInitialState();
+
+function saveState(next, reason = 'save', forceBackup = false) {
+  snapshot(reason, forceBackup);
+  next.meta.revision = (state.meta.revision || 0) + 1;
+  next.meta.lastUpdated = new Date().toISOString();
+  writeAtomic(DATA_FILE, JSON.stringify(next, null, 2));
+  state = next;
   return state;
 }
 
+// ---------------------------------------------------------------------------
+// Auth: optional shared password, signed HttpOnly cookie
+// ---------------------------------------------------------------------------
+function loadSecret() {
+  try {
+    const existing = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+    if (existing.length >= 32) return existing;
+  } catch (e) {
+    /* create below */
+  }
+  const fresh = crypto.randomBytes(32).toString('hex');
+  writeAtomic(SECRET_FILE, fresh, 0o600);
+  return fresh;
+}
+
+const SESSION_SECRET = APP_PASSWORD ? loadSecret() : '';
+// Changing APP_PASSWORD signs everyone out.
+const PASSWORD_TAG = crypto.createHash('sha256').update(APP_PASSWORD).digest('hex');
+const COOKIE = 'vc_session';
+
+function sign(value) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(`${value}|${PASSWORD_TAG}`).digest('base64url');
+}
+
+function safeEqual(a, b) {
+  const ha = crypto.createHash('sha256').update(String(a)).digest();
+  const hb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie || '';
+  for (const part of header.split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return decodeURIComponent(v.join('='));
+  }
+  return null;
+}
+
+function isAuthenticated(req) {
+  if (!APP_PASSWORD) return true;
+  const token = readCookie(req, COOKIE);
+  if (!token) return false;
+  const [exp, sig] = token.split('.');
+  if (!exp || !sig || !/^\d+$/.test(exp) || Number(exp) < Date.now()) return false;
+  return safeEqual(sig, sign(exp));
+}
+
+function setSessionCookie(req, res, value, maxAgeSec) {
+  const parts = [`${COOKIE}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${maxAgeSec}`];
+  if (req.secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+// Simple in-memory limit on failed logins per client IP.
+const failedLogins = new Map();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 10;
+
+// ---------------------------------------------------------------------------
+// Middleware
+// ---------------------------------------------------------------------------
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy':
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; " +
+      "img-src 'self' data:; connect-src 'self'; manifest-src 'self'; object-src 'none'; " +
+      "base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Resource-Policy': 'same-origin'
+  });
+  next();
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+// CSRF guard: every state-changing API call must carry this header. Browsers
+// only let other sites send custom headers after a CORS preflight, which this
+// server never approves (no CORS headers are sent at all).
+app.use('/api', (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') return next();
+  if (req.get('X-Requested-With') !== 'VowCraft') {
+    return res.status(403).json({ error: 'Missing X-Requested-With header' });
+  }
+  next();
+});
+
+app.use(express.json({ limit: '5mb' }));
+
 // API Routes
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '0.9.0-beta', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version, timestamp: new Date().toISOString() });
+});
+
+app.get('/api/session', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ authRequired: !!APP_PASSWORD, authenticated: isAuthenticated(req) });
+});
+
+app.post('/api/login', (req, res) => {
+  if (!APP_PASSWORD) return res.json({ ok: true });
+  const ip = req.ip;
+  const now = Date.now();
+  for (const [k, v] of failedLogins) if (now - v.first > LOGIN_WINDOW_MS) failedLogins.delete(k);
+  const current = failedLogins.get(ip);
+  if (current && current.count >= LOGIN_MAX_FAILURES) {
+    return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  }
+  const password = req.body && typeof req.body.password === 'string' ? req.body.password : '';
+  if (!safeEqual(password, APP_PASSWORD)) {
+    failedLogins.set(ip, { first: current ? current.first : now, count: (current ? current.count : 0) + 1 });
+    return res.status(401).json({ error: 'Wrong password.' });
+  }
+  failedLogins.delete(ip);
+  const exp = String(now + SESSION_DAYS * 24 * 60 * 60 * 1000);
+  setSessionCookie(req, res, `${exp}.${sign(exp)}`, SESSION_DAYS * 24 * 60 * 60);
+  res.json({ ok: true });
+});
+
+app.post('/api/logout', (req, res) => {
+  setSessionCookie(req, res, '', 0);
+  res.json({ ok: true });
+});
+
+// Everything below needs a valid session when APP_PASSWORD is set.
+app.use('/api', (req, res, next) => {
+  if (isAuthenticated(req)) return next();
+  res.status(401).json({ error: 'auth_required' });
 });
 
 app.get('/api/state', (req, res) => {
-  res.json(loadState());
+  res.set('Cache-Control', 'no-store');
+  res.json(state);
 });
 
 app.put('/api/state', (req, res) => {
-  if (!req.body || !req.body.meta || !Array.isArray(req.body.modules)) {
-    return res.status(400).json({ error: 'Invalid state payload' });
+  const body = req.body;
+  const problem = validateState(body);
+  if (problem) return res.status(400).json({ error: `Invalid state payload: ${problem}` });
+  // Optimistic concurrency: the client must send the revision it last saw.
+  if (body.meta.revision !== state.meta.revision) {
+    return res.status(409).json({ error: 'conflict', state });
   }
-  const updated = saveState(req.body);
-  res.json(updated);
+  const reason = req.get('X-Save-Reason') === 'import' ? 'import' : 'save';
+  res.json(saveState(normalise(body), reason, reason === 'import'));
 });
 
 app.post('/api/preset/:presetId', (req, res) => {
-  const state = loadState();
+  const next = structuredClone(state);
   const { presetId } = req.params;
-  const preset = state.templates[presetId];
+  const preset = next.templates[presetId];
   if (!preset) {
     return res.status(404).json({ error: 'Preset not found' });
   }
-  state.meta.weddingType = presetId;
-  state.modules.forEach((mod) => {
+  next.meta.weddingType = presetId;
+  next.modules.forEach((mod) => {
     mod.enabled = preset.enabledModules.includes(mod.id);
   });
-  res.json(saveState(state));
+  res.json(saveState(next));
 });
 
 app.post('/api/reset', (req, res) => {
-  const fresh = saveState(createDefaultState());
-  res.json(fresh);
+  const mode = req.body && req.body.mode === 'blank' ? 'blank' : 'demo';
+  const fresh = normalise(mode === 'blank' ? createBlankState() : createDefaultState());
+  fresh.meta.locale = state.meta.locale;
+  fresh.meta.currency = state.meta.currency;
+  res.json(saveState(fresh, `before-reset-${mode}`, true));
+});
+
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not found' });
 });
 
 // SPA Fallback
@@ -508,6 +836,15 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// JSON errors instead of HTML stack traces (e.g. malformed request bodies)
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error(err);
+  res.status(status).json({ error: status === 413 ? 'Payload too large' : status < 500 ? 'Bad request' : 'Server error' });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`💍 VowCraft Wedding Planner running at http://0.0.0.0:${PORT}`);
+  console.log(`💍 VowCraft Wedding Planner ${version} running at http://0.0.0.0:${PORT}`);
+  console.log(APP_PASSWORD ? 'Password login is ON (APP_PASSWORD set).' : 'WARNING: no APP_PASSWORD set, anyone who can reach this port can read and change the plan.');
 });

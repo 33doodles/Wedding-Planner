@@ -8,12 +8,22 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>VowCraft — Modular Wedding Planner</title>
   <link rel="manifest" href="/manifest.json" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/fonts/fonts.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <!-- Login overlay (only shown when the server has APP_PASSWORD set) -->
+  <div class="login-overlay hidden" id="loginOverlay">
+    <form class="card login-card" id="loginForm">
+      <div class="brand-logo">💍</div>
+      <h2>VowCraft</h2>
+      <p class="text-muted">Enter the password to open your wedding plan.</p>
+      <input type="password" id="loginPasswordInput" class="input" autocomplete="current-password" placeholder="Password" required />
+      <p class="login-error hidden" id="loginError"></p>
+      <button type="submit" class="btn btn-primary">Unlock</button>
+    </form>
+  </div>
+
   <div class="app-shell">
     <!-- Desktop Sidebar / Mobile Header -->
     <aside class="sidebar">
@@ -274,12 +284,40 @@
               </div>
               <div class="form-row-split">
                 <div class="form-row">
-                  <label>Total Estimated Budget ($)</label>
+                  <label>Total Estimated Budget (<span class="currency-symbol">$</span>)</label>
                   <input type="number" id="metaEstimatedBudget" class="input" min="0" step="100" />
                 </div>
                 <div class="form-row">
                   <label>Target Guest Capacity</label>
                   <input type="number" id="metaTargetGuestCount" class="input" min="1" />
+                </div>
+              </div>
+              <div class="form-row-split">
+                <div class="form-row">
+                  <label>Date & Number Format</label>
+                  <select id="metaLocale" class="input">
+                    <option value="en-AU">English (Australia)</option>
+                    <option value="en-NZ">English (New Zealand)</option>
+                    <option value="en-GB">English (UK)</option>
+                    <option value="en-IE">English (Ireland)</option>
+                    <option value="en-CA">English (Canada)</option>
+                    <option value="en-US">English (US)</option>
+                    <option value="de-DE">Deutsch</option>
+                    <option value="fr-FR">Français</option>
+                    <option value="es-ES">Español</option>
+                    <option value="it-IT">Italiano</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>Currency</label>
+                  <select id="metaCurrency" class="input">
+                    <option value="AUD">AUD</option>
+                    <option value="NZD">NZD</option>
+                    <option value="GBP">GBP</option>
+                    <option value="EUR">EUR</option>
+                    <option value="CAD">CAD</option>
+                    <option value="USD">USD</option>
+                  </select>
                 </div>
               </div>
               <button type="submit" class="btn btn-primary">Save Wedding Profile</button>
@@ -288,7 +326,7 @@
 
           <div class="card section-card">
             <h3>Data Export, Import & Reset</h3>
-            <p class="text-muted mb-md">All changes automatically sync to the backend Docker volume (`data/wedding-data.json`) and browser storage. You can also export snapshots anytime.</p>
+            <p class="text-muted mb-md">All changes automatically sync to the backend Docker volume (<code>data/wedding-data.json</code>) and browser storage. The server also keeps rotating snapshots in <code>data/backups/</code>. You can export your own backup anytime.</p>
             <div class="button-stack">
               <button type="button" class="btn btn-secondary" id="downloadJsonBackupBtn">⬇ Download Full Wedding Backup (.json)</button>
               <label class="btn btn-secondary file-upload-btn">
@@ -297,7 +335,9 @@
               </label>
               <button type="button" class="btn btn-secondary" id="printSummaryBtn">🖨️ Print / Save PDF Day-Of Cheat Sheet</button>
               <hr class="divider" />
+              <button type="button" class="btn btn-danger" id="startBlankBtn">✦ Start a Blank Plan</button>
               <button type="button" class="btn btn-danger" id="resetDemoDataBtn">↺ Reset to Default Demo Data</button>
+              <button type="button" class="btn btn-secondary hidden" id="logoutBtn">🔒 Sign Out on This Device</button>
             </div>
           </div>
         </div>
@@ -448,7 +488,7 @@
             </select>
           </div>
           <div class="form-row">
-            <label>Allocated Budget ($)</label>
+            <label>Allocated Budget (<span class="currency-symbol">$</span>)</label>
             <input type="number" id="customModBudget" class="input" value="500" min="0" />
           </div>
         </div>

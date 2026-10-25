@@ -6,12 +6,43 @@
   let activeModuleCategory = 'All';
   let expandedModules = new Set(['venue', 'catering', 'photography']);
   let saveTimeout = null;
+  let saveInFlight = false;
+  let savePending = false;
+  let saveReason = null;
+  let authRequired = false;
 
-  // Format currency
+  const locale = () => (appState && appState.meta.locale) || 'en-US';
+  const currency = () => (appState && appState.meta.currency) || 'USD';
+
+  // Format currency in the plan's locale and currency
   const fmtCurrency = (val) => {
     const num = Number(val) || 0;
-    return '$' + num.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    try {
+      return new Intl.NumberFormat(locale(), { style: 'currency', currency: currency(), maximumFractionDigits: 0 }).format(num);
+    } catch (e) {
+      return '$' + num.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    }
   };
+
+  const currencySymbol = () => {
+    try {
+      const part = new Intl.NumberFormat(locale(), { style: 'currency', currency: currency() })
+        .formatToParts(0)
+        .find((p) => p.type === 'currency');
+      return part ? part.value : '$';
+    } catch (e) {
+      return '$';
+    }
+  };
+
+  // All API calls go through here: same-origin cookies plus the CSRF header
+  async function api(url, options = {}) {
+    const headers = { 'X-Requested-With': 'VowCraft', ...(options.headers || {}) };
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const res = await fetch(url, { credentials: 'same-origin', ...options, headers });
+    if (res.status === 401 && authRequired) showLogin();
+    return res;
+  }
 
   // Escape HTML
   const esc = (str) => {
@@ -57,13 +88,51 @@
     }
   }
 
-  // Load state from server or fallback to localStorage
-  async function initApp() {
+  function cacheState() {
     try {
-      const res = await fetch('/api/state');
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+    } catch (e) {
+      /* storage full or blocked: the server copy is the source of truth */
+    }
+  }
+
+  // Login overlay (only used when the server has APP_PASSWORD set)
+  function showLogin(message) {
+    document.getElementById('loginOverlay').classList.remove('hidden');
+    const err = document.getElementById('loginError');
+    err.textContent = message || '';
+    err.classList.toggle('hidden', !message);
+    document.getElementById('loginPasswordInput').focus();
+  }
+
+  function bindLoginForm() {
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('loginPasswordInput');
+      try {
+        const res = await api('/api/login', { method: 'POST', body: JSON.stringify({ password: input.value }) });
+        if (res.ok) {
+          input.value = '';
+          document.getElementById('loginOverlay').classList.add('hidden');
+          await loadState();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          showLogin(data.error || 'Could not sign in.');
+        }
+      } catch (err) {
+        showLogin('Server unreachable.');
+      }
+    });
+  }
+
+  let eventsBound = false;
+  async function loadState() {
+    try {
+      const res = await api('/api/state');
+      if (res.status === 401) return;
       if (!res.ok) throw new Error('Server unreachable');
       appState = await res.json();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+      cacheState();
       setSyncIndicator('online');
     } catch (err) {
       const cached = localStorage.getItem(STORAGE_KEY);
@@ -72,33 +141,155 @@
       }
       setSyncIndicator('offline');
     }
-    bindGlobalEvents();
+    if (!appState) return;
+    if (!eventsBound) {
+      bindGlobalEvents();
+      eventsBound = true;
+    }
     renderAll();
   }
 
-  // Persist state to localStorage + debounced PUT to server
-  function persistState() {
-    if (!appState) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
-    setSyncIndicator('saving');
+  // Check whether a login is needed, then load state from server or fallback to localStorage
+  async function initApp() {
+    bindLoginForm();
+    try {
+      const res = await fetch('/api/session', { credentials: 'same-origin' });
+      const session = await res.json();
+      authRequired = !!session.authRequired;
+      if (authRequired && !session.authenticated) {
+        showLogin();
+        return;
+      }
+    } catch (e) {
+      /* offline: fall through to the cached copy */
+    }
+    await loadState();
 
-    if (saveTimeout) clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(async () => {
+    // Pick up changes made on another device when this tab comes back into view
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible' || !appState || saveInFlight || saveTimeout) return;
       try {
-        const res = await fetch('/api/state', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(appState)
-        });
-        if (res.ok) {
-          setSyncIndicator('online');
-        } else {
-          setSyncIndicator('offline');
+        const res = await api('/api/state');
+        if (!res.ok) return;
+        const latest = await res.json();
+        if ((latest.meta.revision || 0) !== (appState.meta.revision || 0)) {
+          appState = latest;
+          cacheState();
+          renderAll();
+          showToast('Loaded the latest changes from another device');
         }
+        setSyncIndicator('online');
       } catch (e) {
         setSyncIndicator('offline');
       }
-    }, 350);
+    });
+  }
+
+  // Persist state to localStorage + debounced PUT to server
+  function persistState(reason) {
+    if (!appState) return;
+    cacheState();
+    setSyncIndicator('saving');
+    if (reason) saveReason = reason;
+
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(flushSave, 350);
+  }
+
+  // One PUT at a time, so each save carries the revision the server returned last
+  async function flushSave() {
+    saveTimeout = null;
+    if (saveInFlight) {
+      savePending = true;
+      return;
+    }
+    saveInFlight = true;
+    const reason = saveReason;
+    saveReason = null;
+    try {
+      const res = await api('/api/state', {
+        method: 'PUT',
+        headers: reason ? { 'X-Save-Reason': reason } : {},
+        body: JSON.stringify(appState)
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        appState.meta.revision = saved.meta.revision;
+        appState.meta.lastUpdated = saved.meta.lastUpdated;
+        cacheState();
+        setSyncIndicator('online');
+      } else if (res.status === 409) {
+        // Someone else saved first: show their version instead of overwriting it
+        const data = await res.json();
+        appState = data.state;
+        savePending = false;
+        cacheState();
+        renderAll();
+        setSyncIndicator('online');
+        showToast('This plan was changed on another device. Showing the latest version; please redo your last change.');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSyncIndicator('offline');
+        if (res.status === 400) showToast(data.error || 'The server rejected this change.');
+      }
+    } catch (e) {
+      setSyncIndicator('offline');
+    } finally {
+      saveInFlight = false;
+      if (savePending) {
+        savePending = false;
+        flushSave();
+      }
+    }
+  }
+
+  // Reorder: swap with the neighbouring module in the list the user is looking at
+  function moveModule(modId, direction, visibleIds) {
+    const pos = visibleIds.indexOf(modId);
+    const neighbourId = visibleIds[pos + direction];
+    if (pos === -1 || !neighbourId) return;
+    const from = appState.modules.findIndex((m) => m.id === modId);
+    const to = appState.modules.findIndex((m) => m.id === neighbourId);
+    const [mod] = appState.modules.splice(from, 1);
+    appState.modules.splice(to, 0, mod);
+    persistState();
+    renderAll();
+  }
+
+  // Duplicate: same fields, options and checklist titles, nothing filled in
+  function duplicateModule(modId) {
+    const src = appState.modules.find((m) => m.id === modId);
+    if (!src) return;
+    const name = prompt('Name for the new module:', `${src.name} (copy)`);
+    if (!name || !name.trim()) return;
+    const stamp = Date.now();
+    const copy = {
+      ...JSON.parse(JSON.stringify(src)),
+      id: 'mod-' + stamp,
+      name: name.trim(),
+      budgetAllocated: 0,
+      actualCost: 0,
+      depositPaid: false,
+      contractSigned: false
+    };
+    copy.fields = copy.fields.map((f) => ({ ...f, value: '' }));
+    copy.checklist = copy.checklist.map((task, i) => ({ ...task, id: `t-${stamp}-${i}`, completed: false, skipped: false, notes: '' }));
+    appState.modules.splice(appState.modules.indexOf(src) + 1, 0, copy);
+    expandedModules.add(copy.id);
+    persistState();
+    renderAll();
+    switchTab('modules', copy.id);
+    showToast(`Created "${copy.name}"`);
+  }
+
+  function deleteModule(modId) {
+    const mod = appState.modules.find((m) => m.id === modId);
+    if (!mod) return;
+    if (!confirm(`Delete the "${mod.name}" module, including its details and checklist? Tip: switching it off keeps everything instead.`)) return;
+    appState.modules = appState.modules.filter((m) => m.id !== modId);
+    persistState();
+    renderAll();
+    showToast(`Deleted "${mod.name}"`);
   }
 
   // Switch active tab
@@ -196,7 +387,7 @@
     document.getElementById('heroCoupleHeading').textContent = `${meta.coupleNames}'s Wedding`;
 
     const dateFormatted = meta.weddingDate
-      ? new Date(meta.weddingDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+      ? new Date(meta.weddingDate + 'T12:00:00').toLocaleDateString(locale(), { month: 'long', day: 'numeric', year: 'numeric' })
       : 'Date TBD';
     document.getElementById('sidebarWeddingDate').textContent = `${dateFormatted} • ${meta.locationCity || 'Location TBD'}`;
 
@@ -285,8 +476,9 @@
       ? appState.modules.filter((m) => m.enabled)
       : appState.modules;
 
+    const overviewIds = modulesToDisplay.map((m) => m.id);
     overviewGrid.innerHTML = modulesToDisplay
-      .map((mod) => {
+      .map((mod, i) => {
         const activeTasks = mod.checklist.filter((t) => !t.skipped);
         const doneTasks = activeTasks.filter((t) => t.completed).length;
         const primaryField = mod.fields[0] && mod.fields[0].value ? mod.fields[0].value : 'No vendor selected yet';
@@ -321,9 +513,15 @@
                 <span class="badge ${mod.enabled ? (mod.contractSigned ? 'success' : 'warning') : 'neutral'}">
                   ${!mod.enabled ? 'Skipped / Disabled' : mod.contractSigned ? 'Booked & Signed' : 'In Progress'}
                 </span>
-                <button type="button" class="btn btn-secondary btn-sm open-mod-detail-btn" data-mod-id="${esc(mod.id)}">
-                  ${mod.enabled ? 'Fill Details →' : 'View / Enable'}
-                </button>
+                <div class="mod-overview-actions">
+                  <span class="mod-order-btns">
+                    <button type="button" class="icon-btn move-mod-btn" title="Move earlier" aria-label="Move ${esc(mod.name)} earlier" data-mod-id="${esc(mod.id)}" data-dir="-1" ${i === 0 ? 'disabled' : ''}>▲</button>
+                    <button type="button" class="icon-btn move-mod-btn" title="Move later" aria-label="Move ${esc(mod.name)} later" data-mod-id="${esc(mod.id)}" data-dir="1" ${i === modulesToDisplay.length - 1 ? 'disabled' : ''}>▼</button>
+                  </span>
+                  <button type="button" class="btn btn-secondary btn-sm open-mod-detail-btn" data-mod-id="${esc(mod.id)}">
+                    ${mod.enabled ? 'Fill Details →' : 'View / Enable'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -343,6 +541,10 @@
           showToast(`${mod.name} ${mod.enabled ? 'enabled' : 'greyed out'}`);
         }
       });
+    });
+
+    overviewGrid.querySelectorAll('.move-mod-btn').forEach((btn) => {
+      btn.addEventListener('click', () => moveModule(btn.dataset.modId, Number(btn.dataset.dir), overviewIds));
     });
 
     overviewGrid.querySelectorAll('.open-mod-detail-btn').forEach((btn) => {
@@ -382,10 +584,13 @@
     });
 
     filtered.sort((a, b) => Number(b.enabled) - Number(a.enabled));
+    const detailIds = filtered.map((m) => m.id);
+    // Enabled modules always sort first, so only move within the same group
+    const canMove = (i, dir) => filtered[i + dir] && filtered[i + dir].enabled === filtered[i].enabled;
 
     const container = document.getElementById('modulesDetailList');
     container.innerHTML = filtered
-      .map((mod) => {
+      .map((mod, i) => {
         const isExpanded = expandedModules.has(mod.id);
         const activeTasks = mod.checklist.filter((t) => !t.skipped);
         const doneCount = activeTasks.filter((t) => t.completed).length;
@@ -401,7 +606,7 @@
                 </div>
               </div>
 
-              <div style="display:flex; align-items:center; gap:0.85rem; flex-wrap:wrap;" onclick="event.stopPropagation();">
+              <div class="mod-header-actions" style="display:flex; align-items:center; gap:0.85rem; flex-wrap:wrap;">
                 <span class="badge ${mod.enabled ? 'success' : 'neutral'}">
                   ${mod.enabled ? `${doneCount}/${activeTasks.length} Tasks • ${fmtCurrency(mod.actualCost)}` : 'Greyed Out (Excluded)'}
                 </span>
@@ -410,6 +615,12 @@
                   <span class="slider"></span>
                   <span>${mod.enabled ? 'Included' : 'Skipped'}</span>
                 </label>
+                <span class="mod-order-btns">
+                  <button type="button" class="icon-btn move-mod-btn" title="Move earlier" aria-label="Move ${esc(mod.name)} earlier" data-mod-id="${esc(mod.id)}" data-dir="-1" ${canMove(i, -1) ? '' : 'disabled'}>▲</button>
+                  <button type="button" class="icon-btn move-mod-btn" title="Move later" aria-label="Move ${esc(mod.name)} later" data-mod-id="${esc(mod.id)}" data-dir="1" ${canMove(i, 1) ? '' : 'disabled'}>▼</button>
+                </span>
+                <button type="button" class="icon-btn duplicate-mod-btn" title="Duplicate this module's fields and checklist" data-mod-id="${esc(mod.id)}">⧉ Duplicate</button>
+                <button type="button" class="icon-btn delete-mod-btn" title="Delete module" data-mod-id="${esc(mod.id)}">✕</button>
                 <button type="button" class="icon-btn expand-btn" data-toggle-btn="${esc(mod.id)}">
                   ${isExpanded ? '▲ Collapse' : '▼ Expand Worksheet'}
                 </button>
@@ -436,11 +647,11 @@
 
                   <div class="budget-inline-row">
                     <div>
-                      <label style="font-size:0.75rem; font-weight:600;">Allocated Budget ($)</label>
+                      <label style="font-size:0.75rem; font-weight:600;">Allocated Budget (${esc(currencySymbol())})</label>
                       <input type="number" class="input mod-budget-input" data-mod-id="${esc(mod.id)}" data-prop="budgetAllocated" value="${Number(mod.budgetAllocated) || 0}" />
                     </div>
                     <div>
-                      <label style="font-size:0.75rem; font-weight:600;">Actual / Quoted Cost ($)</label>
+                      <label style="font-size:0.75rem; font-weight:600;">Actual / Quoted Cost (${esc(currencySymbol())})</label>
                       <input type="number" class="input mod-budget-input" data-mod-id="${esc(mod.id)}" data-prop="actualCost" value="${Number(mod.actualCost) || 0}" />
                     </div>
                     <label class="toggle-inline">
@@ -533,10 +744,25 @@
       })
       .join('');
 
-    bindModuleDetailEvents(container);
+    bindModuleDetailEvents(container, detailIds);
   }
 
-  function bindModuleDetailEvents(container) {
+  function bindModuleDetailEvents(container, detailIds) {
+    // Header buttons shouldn't also toggle expand/collapse
+    container.querySelectorAll('.mod-header-actions').forEach((el) => {
+      el.addEventListener('click', (e) => e.stopPropagation());
+    });
+
+    container.querySelectorAll('.move-mod-btn').forEach((btn) => {
+      btn.addEventListener('click', () => moveModule(btn.dataset.modId, Number(btn.dataset.dir), detailIds));
+    });
+    container.querySelectorAll('.duplicate-mod-btn').forEach((btn) => {
+      btn.addEventListener('click', () => duplicateModule(btn.dataset.modId));
+    });
+    container.querySelectorAll('.delete-mod-btn').forEach((btn) => {
+      btn.addEventListener('click', () => deleteModule(btn.dataset.modId));
+    });
+
     // Expand / Collapse header
     container.querySelectorAll('[data-toggle-expand]').forEach((hdr) => {
       hdr.addEventListener('click', () => {
@@ -954,6 +1180,21 @@
     document.getElementById('metaLocationCity').value = meta.locationCity || '';
     document.getElementById('metaEstimatedBudget').value = meta.estimatedBudget || 0;
     document.getElementById('metaTargetGuestCount').value = meta.targetGuestCount || 100;
+    setSelectValue('metaLocale', locale());
+    setSelectValue('metaCurrency', currency());
+    document.querySelectorAll('.currency-symbol').forEach((el) => {
+      el.textContent = currencySymbol();
+    });
+    document.getElementById('logoutBtn').classList.toggle('hidden', !authRequired);
+  }
+
+  // Select a value, adding it as an option first if it's not in the list
+  function setSelectValue(id, value) {
+    const sel = document.getElementById(id);
+    if (![...sel.options].some((o) => o.value === value)) {
+      sel.add(new Option(value, value));
+    }
+    sel.value = value;
   }
 
   // Open Add/Edit Guest Modal
@@ -1147,6 +1388,8 @@
       appState.meta.locationCity = document.getElementById('metaLocationCity').value.trim();
       appState.meta.estimatedBudget = Number(document.getElementById('metaEstimatedBudget').value) || 0;
       appState.meta.targetGuestCount = Number(document.getElementById('metaTargetGuestCount').value) || 100;
+      appState.meta.locale = document.getElementById('metaLocale').value;
+      appState.meta.currency = document.getElementById('metaCurrency').value;
       persistState();
       renderAll();
       showToast('Wedding profile saved!');
@@ -1174,35 +1417,82 @@
             alert('Invalid backup file format.');
             return;
           }
-          appState = parsed;
-          persistState();
-          renderAll();
-          showToast('Wedding backup restored successfully!');
+          restoreBackup(parsed);
         } catch (err) {
           alert('Could not parse JSON file.');
         }
       };
       reader.readAsText(file);
+      e.target.value = '';
     });
+
+    // Send an imported backup straight to the server; only show it once it's accepted
+    async function restoreBackup(parsed) {
+      if (!confirm('Replace the current plan with this backup? The server keeps a snapshot of the current plan first.')) return;
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+        saveTimeout = null;
+      }
+      try {
+        const latest = await (await api('/api/state')).json();
+        parsed.meta.revision = latest.meta.revision;
+        const res = await api('/api/state', {
+          method: 'PUT',
+          headers: { 'X-Save-Reason': 'import' },
+          body: JSON.stringify(parsed)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'The server rejected this backup.');
+          return;
+        }
+        appState = data;
+        cacheState();
+        renderAll();
+        setSyncIndicator('online');
+        showToast('Wedding backup restored successfully!');
+      } catch (err) {
+        alert('Could not reach the server to restore the backup.');
+      }
+    }
 
     document.getElementById('printSummaryBtn').addEventListener('click', () => {
       window.print();
     });
 
-    document.getElementById('resetDemoDataBtn').addEventListener('click', async () => {
-      if (!confirm('Reset all wedding modules, checklists, and guests back to the default demo data?')) return;
+    async function resetPlan(mode) {
       try {
-        const res = await fetch('/api/reset', { method: 'POST' });
+        const res = await api('/api/reset', { method: 'POST', body: JSON.stringify({ mode }) });
         if (res.ok) {
           appState = await res.json();
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+          cacheState();
           renderAll();
-          showToast('Reset to default demo data');
+          showToast(mode === 'blank' ? 'Started a blank plan' : 'Reset to default demo data');
+        } else {
+          showToast('Could not reset the plan.');
         }
       } catch (e) {
-        localStorage.removeItem(STORAGE_KEY);
-        location.reload();
+        showToast('Server unreachable, nothing was reset.');
       }
+    }
+
+    document.getElementById('resetDemoDataBtn').addEventListener('click', () => {
+      if (!confirm('Reset all wedding modules, checklists, and guests back to the default demo data? The server keeps a snapshot first.')) return;
+      resetPlan('demo');
+    });
+    document.getElementById('startBlankBtn').addEventListener('click', () => {
+      if (!confirm('Clear everything and start a blank plan (same modules, nothing filled in, no guests)? The server keeps a snapshot first.')) return;
+      resetPlan('blank');
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await api('/api/logout', { method: 'POST' }).catch(() => {});
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (e) {
+        /* ignore */
+      }
+      location.reload();
     });
   }
 
