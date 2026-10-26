@@ -282,6 +282,107 @@
     showToast(`Created "${copy.name}"`);
   }
 
+  // Edit a module's name, emoji, category, worksheet field labels and checklist
+  const TIMELINES = [
+    '12+ Months Out', '9–12 Months Out', '9 Months Out', '6–9 Months Out', '6 Months Out', '3–6 Months Out',
+    '3 Months Out', '2–3 Months Out', '1–2 Months Out', '1 Month Out', '2–4 Weeks Out', '2 Weeks Out',
+    '1 Week Out', 'Wedding Week'
+  ];
+  let editingModuleId = null;
+
+  function timelineOptions(current) {
+    const list = TIMELINES.includes(current) || !current ? TIMELINES : [current, ...TIMELINES];
+    return list.map((t) => `<option value="${esc(t)}" ${t === current ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  }
+
+  function fieldRowHtml(f, idx) {
+    return `
+      <div class="edit-row" data-field-idx="${idx}">
+        <input type="text" class="input edit-field-label" value="${esc(f.label)}" maxlength="120" required aria-label="Field label" />
+        <button type="button" class="icon-btn edit-row-remove" title="Remove field" aria-label="Remove field">✕</button>
+      </div>`;
+  }
+
+  function taskRowHtml(task) {
+    return `
+      <div class="edit-row" ${task ? `data-task-id="${esc(task.id)}"` : 'data-new="true"'}>
+        <input type="text" class="input edit-task-title" value="${esc(task ? task.title : '')}" maxlength="200" required placeholder="Task title" aria-label="Task title" />
+        <select class="input edit-row-timeline edit-task-timeline" aria-label="Timeline">${timelineOptions(task ? task.timeline : '3–6 Months Out')}</select>
+        <button type="button" class="icon-btn edit-row-remove" title="Remove task" aria-label="Remove task">✕</button>
+      </div>`;
+  }
+
+  function openModuleEditor(modId) {
+    const mod = appState.modules.find((m) => m.id === modId);
+    if (!mod) return;
+    editingModuleId = modId;
+    document.getElementById('editModName').value = mod.name;
+    document.getElementById('editModIcon').value = mod.icon || '';
+    document.getElementById('editModCategory').value = mod.category || '';
+    const cats = new Set(['Foundation', 'Food & Drink', 'Media', 'Atmosphere', 'Personal', 'Guest Experience']);
+    appState.modules.forEach((m) => m.category && cats.add(m.category));
+    document.getElementById('editModCategoryList').innerHTML = [...cats].map((c) => `<option value="${esc(c)}"></option>`).join('');
+    document.getElementById('editFieldsList').innerHTML = mod.fields.map(fieldRowHtml).join('') || '<p class="text-muted">No fields.</p>';
+    document.getElementById('editTasksList').innerHTML = mod.checklist.map(taskRowHtml).join('');
+    document.getElementById('moduleEditModal').classList.remove('hidden');
+    document.getElementById('editModName').focus();
+  }
+
+  function closeModuleEditor() {
+    editingModuleId = null;
+    document.getElementById('moduleEditModal').classList.add('hidden');
+  }
+
+  function saveModuleEdits() {
+    const mod = appState.modules.find((m) => m.id === editingModuleId);
+    if (!mod) return closeModuleEditor();
+    mod.name = document.getElementById('editModName').value.trim() || mod.name;
+    mod.icon = document.getElementById('editModIcon').value.trim() || mod.icon || '✨';
+    mod.category = document.getElementById('editModCategory').value.trim() || mod.category || 'Custom';
+
+    const oldFields = mod.fields;
+    mod.fields = [...document.querySelectorAll('#editFieldsList .edit-row')]
+      .map((row) => {
+        const f = oldFields[Number(row.dataset.fieldIdx)];
+        if (!f) return null;
+        return { ...f, label: row.querySelector('.edit-field-label').value.trim() || f.label };
+      })
+      .filter(Boolean);
+
+    const oldTasks = mod.checklist;
+    const stamp = Date.now();
+    mod.checklist = [...document.querySelectorAll('#editTasksList .edit-row')].map((row, i) => {
+      const title = row.querySelector('.edit-task-title').value.trim();
+      const timeline = row.querySelector('.edit-task-timeline').value;
+      const old = row.dataset.taskId && oldTasks.find((t) => t.id === row.dataset.taskId);
+      if (old) return { ...old, title: title || old.title, timeline };
+      return { id: `t-${stamp}-${i}`, title, timeline, completed: false, skipped: false, notes: '' };
+    });
+
+    persistState();
+    renderAll();
+    closeModuleEditor();
+    showToast(`Saved changes to "${mod.name}"`);
+  }
+
+  function bindModuleEditor() {
+    document.getElementById('closeModuleEditBtn').addEventListener('click', closeModuleEditor);
+    document.getElementById('cancelModuleEditBtn').addEventListener('click', closeModuleEditor);
+    document.getElementById('editAddTaskBtn').addEventListener('click', () => {
+      const list = document.getElementById('editTasksList');
+      list.insertAdjacentHTML('beforeend', taskRowHtml(null));
+      list.lastElementChild.querySelector('input').focus();
+    });
+    document.getElementById('moduleEditModal').addEventListener('click', (e) => {
+      const btn = e.target.closest('.edit-row-remove');
+      if (btn) btn.closest('.edit-row').remove();
+    });
+    document.getElementById('moduleEditForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveModuleEdits();
+    });
+  }
+
   function deleteModule(modId) {
     const mod = appState.modules.find((m) => m.id === modId);
     if (!mod) return;
@@ -619,6 +720,7 @@
                   <button type="button" class="icon-btn move-mod-btn" title="Move earlier" aria-label="Move ${esc(mod.name)} earlier" data-mod-id="${esc(mod.id)}" data-dir="-1" ${canMove(i, -1) ? '' : 'disabled'}>▲</button>
                   <button type="button" class="icon-btn move-mod-btn" title="Move later" aria-label="Move ${esc(mod.name)} later" data-mod-id="${esc(mod.id)}" data-dir="1" ${canMove(i, 1) ? '' : 'disabled'}>▼</button>
                 </span>
+                <button type="button" class="icon-btn edit-mod-btn" title="Edit name, emoji, category, fields and checklist" data-mod-id="${esc(mod.id)}">✎ Edit</button>
                 <button type="button" class="icon-btn duplicate-mod-btn" title="Duplicate this module's fields and checklist" data-mod-id="${esc(mod.id)}">⧉ Duplicate</button>
                 <button type="button" class="icon-btn delete-mod-btn" title="Delete module" data-mod-id="${esc(mod.id)}">✕</button>
                 <button type="button" class="icon-btn expand-btn" data-toggle-btn="${esc(mod.id)}">
@@ -699,9 +801,9 @@
                   </div>
 
                   <div class="checklist-items-stack">
-                    ${mod.checklist
+                    ${sortedTasks(mod.checklist)
                       .map(
-                        (task) => `
+                        (task) => isEditingTask(mod.id, task.id) ? taskInlineEditHtml(mod.id, task) : `
                         <div class="task-row ${task.completed ? 'completed' : ''} ${task.skipped ? 'skipped' : ''}">
                           <div class="task-left">
                             <input type="checkbox" class="task-checkbox" data-mod-id="${esc(mod.id)}" data-task-id="${esc(task.id)}" ${task.completed ? 'checked' : ''} ${task.skipped ? 'disabled' : ''} />
@@ -712,6 +814,7 @@
                             </div>
                           </div>
                           <div class="task-actions">
+                            <button type="button" class="icon-btn edit-task-btn" title="Edit title and timeline" data-mod-id="${esc(mod.id)}" data-task-id="${esc(task.id)}">✎ Edit</button>
                             <button type="button" class="icon-btn skip-task-btn" title="Grey out / skip this task if not needed" data-mod-id="${esc(mod.id)}" data-task-id="${esc(task.id)}">
                               ${task.skipped ? 'Restore' : 'Skip / N/A'}
                             </button>
@@ -755,6 +858,9 @@
 
     container.querySelectorAll('.move-mod-btn').forEach((btn) => {
       btn.addEventListener('click', () => moveModule(btn.dataset.modId, Number(btn.dataset.dir), detailIds));
+    });
+    container.querySelectorAll('.edit-mod-btn').forEach((btn) => {
+      btn.addEventListener('click', () => openModuleEditor(btn.dataset.modId));
     });
     container.querySelectorAll('.duplicate-mod-btn').forEach((btn) => {
       btn.addEventListener('click', () => duplicateModule(btn.dataset.modId));
@@ -892,7 +998,93 @@
     });
   }
 
+  // ---- Checklist ordering and inline editing --------------------------------
+  // How far out a timeline label is, in days before the wedding (bigger = further out).
+  function timelineDaysOut(label) {
+    const s = String(label || '').toLowerCase();
+    if (s.includes('wedding week')) return 3;
+    const m = s.match(/(\d+)\s*(?:[–-]\s*(\d+))?\s*(\+)?\s*(month|week)/);
+    if (!m) return -1;
+    const unit = m[4] === 'month' ? 30 : 7;
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    return ((a + b) / 2) * unit + (m[3] ? 5 : 0);
+  }
+
+  // Sorted copy for display only; the stored order never changes. Ties keep their order.
+  function sortedTasks(tasks) {
+    const mode = (appState.meta && appState.meta.checklistSort) || 'default';
+    if (mode === 'default') return tasks;
+    const dir = mode === 'far' ? -1 : 1;
+    return tasks
+      .map((t, i) => ({ t, i, d: timelineDaysOut(t.timeline) }))
+      .sort((x, y) => (x.d - y.d) * dir || x.i - y.i)
+      .map((x) => x.t);
+  }
+
+  function setChecklistSort(value) {
+    appState.meta.checklistSort = value;
+    persistState();
+    renderAll();
+  }
+
+  let editingTask = null;
+  const isEditingTask = (modId, taskId) => !!editingTask && editingTask.modId === modId && editingTask.taskId === taskId;
+
+  function taskInlineEditHtml(modId, task) {
+    return `
+      <div class="task-row task-row-editing">
+        <div class="edit-row" data-mod-id="${esc(modId)}" data-task-id="${esc(task.id)}">
+          <input type="text" class="input task-edit-title" value="${esc(task.title)}" maxlength="200" aria-label="Task title" />
+          <select class="input edit-row-timeline task-edit-timeline" aria-label="Timeline">${timelineOptions(task.timeline)}</select>
+          <button type="button" class="btn btn-primary btn-sm task-edit-save">Save</button>
+          <button type="button" class="btn btn-secondary btn-sm task-edit-cancel">Cancel</button>
+        </div>
+      </div>`;
+  }
+
+  function saveInlineTaskEdit(row) {
+    const mod = appState.modules.find((m) => m.id === row.dataset.modId);
+    const task = mod && mod.checklist.find((t) => t.id === row.dataset.taskId);
+    if (task) {
+      task.title = row.querySelector('.task-edit-title').value.trim() || task.title;
+      task.timeline = row.querySelector('.task-edit-timeline').value;
+    }
+    editingTask = null;
+    persistState();
+    renderAll();
+    showToast('Task updated');
+  }
+
   function bindTaskRowEvents(scopeEl) {
+    scopeEl.querySelectorAll('.edit-task-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        editingTask = { modId: btn.dataset.modId, taskId: btn.dataset.taskId };
+        renderAll();
+        const input = document.querySelector('.task-edit-title');
+        if (input) input.focus();
+      });
+    });
+    scopeEl.querySelectorAll('.task-edit-save').forEach((btn) => {
+      btn.addEventListener('click', () => saveInlineTaskEdit(btn.closest('.edit-row')));
+    });
+    scopeEl.querySelectorAll('.task-edit-cancel').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        editingTask = null;
+        renderAll();
+      });
+    });
+    scopeEl.querySelectorAll('.task-edit-title').forEach((inp) => {
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveInlineTaskEdit(inp.closest('.edit-row'));
+        } else if (e.key === 'Escape') {
+          editingTask = null;
+          renderAll();
+        }
+      });
+    });
     scopeEl.querySelectorAll('.task-checkbox').forEach((chk) => {
       chk.addEventListener('change', (e) => {
         const mod = appState.modules.find((m) => m.id === e.target.dataset.modId);
@@ -978,14 +1170,22 @@
     });
 
     const groups = {};
-    allTasks.forEach((item) => {
+    sortedTasks(allTasks).forEach((item) => {
       const key = groupMode === 'timeline' ? item.timeline : `${item.modIcon} ${item.modName}`;
       if (!groups[key]) groups[key] = [];
       groups[key].push(item);
     });
 
     const container = document.getElementById('masterChecklistContainer');
-    const groupKeys = Object.keys(groups);
+    let groupKeys = Object.keys(groups);
+    const sortMode = appState.meta.checklistSort || 'default';
+    if (groupMode === 'timeline' && sortMode !== 'default') {
+      const dir = sortMode === 'far' ? -1 : 1;
+      groupKeys = groupKeys
+        .map((k, i) => ({ k, i, d: timelineDaysOut(k) }))
+        .sort((x, y) => (x.d - y.d) * dir || x.i - y.i)
+        .map((x) => x.k);
+    }
 
     if (groupKeys.length === 0) {
       container.innerHTML = `<div class="card text-muted" style="text-align:center; padding:2.5rem;">No checklist tasks match your current filters.</div>`;
@@ -1004,7 +1204,7 @@
             <div class="checklist-items-stack">
               ${items
                 .map(
-                  (t) => `
+                  (t) => isEditingTask(t.modId, t.id) ? taskInlineEditHtml(t.modId, t) : `
                   <div class="task-row ${t.completed ? 'completed' : ''} ${t.effectivelySkipped ? 'skipped' : ''}">
                     <div class="task-left">
                       <input type="checkbox" class="task-checkbox" data-mod-id="${esc(t.modId)}" data-task-id="${esc(t.id)}" ${t.completed ? 'checked' : ''} ${t.effectivelySkipped ? 'disabled' : ''} />
@@ -1018,6 +1218,7 @@
                       </div>
                     </div>
                     <div class="task-actions">
+                      <button type="button" class="icon-btn edit-task-btn" title="Edit title and timeline" data-mod-id="${esc(t.modId)}" data-task-id="${esc(t.id)}">✎ Edit</button>
                       <button type="button" class="icon-btn skip-task-btn" data-mod-id="${esc(t.modId)}" data-task-id="${esc(t.id)}">
                         ${t.skipped ? 'Restore' : 'Skip / N/A'}
                       </button>
@@ -1225,6 +1426,10 @@
 
   function renderAll() {
     if (!appState) return;
+    const sortValue = appState.meta.checklistSort || 'default';
+    document.querySelectorAll('.checklist-sort-select').forEach((sel) => {
+      sel.value = sortValue;
+    });
     renderHeaderAndKpis();
     renderOverviewTab();
     renderModulesTab();
@@ -1234,6 +1439,11 @@
   }
 
   function bindGlobalEvents() {
+    bindModuleEditor();
+    document.querySelectorAll('.checklist-sort-select').forEach((sel) => {
+      sel.addEventListener('change', (e) => setChecklistSort(e.target.value));
+    });
+
     // Navigation buttons
     document.querySelectorAll('.nav-btn, .mob-nav-btn').forEach((btn) => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));

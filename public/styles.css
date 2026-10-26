@@ -1294,6 +1294,72 @@ textarea.input {
   cursor: default;
 }
 
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sort-row .input {
+  width: auto;
+}
+
+.task-row-editing {
+  background: var(--accent-gold-light);
+}
+
+.task-row-editing .edit-row {
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.modal-card-wide {
+  max-width: 720px;
+}
+
+.edit-section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.edit-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.edit-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.edit-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-row .edit-row-timeline {
+  flex: 0 0 150px;
+}
+
+@media (max-width: 560px) {
+  .edit-row {
+    flex-wrap: wrap;
+  }
+  .edit-row .edit-row-timeline {
+    flex: 1 1 100%;
+  }
+}
+
 .mod-overview-actions {
   display: flex;
   align-items: center;
