@@ -500,6 +500,47 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="moduleEditModal">
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h3>Edit Module</h3>
+        <button type="button" class="icon-btn" id="closeModuleEditBtn" aria-label="Close">✕</button>
+      </div>
+      <form id="moduleEditForm" class="form-stack">
+        <div class="form-row-split">
+          <div class="form-row">
+            <label>Module Name *</label>
+            <input type="text" id="editModName" class="input" maxlength="120" required />
+          </div>
+          <div class="form-row">
+            <label>Icon Emoji</label>
+            <input type="text" id="editModIcon" class="input" maxlength="8" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Category</label>
+          <input type="text" id="editModCategory" class="input" list="editModCategoryList" maxlength="60" />
+          <datalist id="editModCategoryList"></datalist>
+        </div>
+
+        <div class="edit-section-title">📋 Worksheet fields <span class="text-muted">(edit labels or remove fields)</span></div>
+        <div id="editFieldsList" class="edit-rows"></div>
+
+        <div class="edit-section-title">
+          <span>☑️ Checklist <span class="text-muted">(edit, re-time or remove tasks)</span></span>
+          <button type="button" class="btn btn-secondary btn-sm" id="editAddTaskBtn">+ Add Task</button>
+        </div>
+        <div id="editTasksList" class="edit-rows"></div>
+
+        <p class="text-muted" style="font-size:0.8rem;">Changes apply when you press Save. Removing a field or task deletes what's typed in it.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="cancelModuleEditBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="toastContainer" class="toast-container"></div>
   <script src="/app.js"></script>
 </body>
