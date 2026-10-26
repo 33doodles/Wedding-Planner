@@ -801,9 +801,9 @@
                   </div>
 
                   <div class="checklist-items-stack">
-                    ${mod.checklist
+                    ${sortedTasks(mod.checklist)
                       .map(
-                        (task) => `
+                        (task) => isEditingTask(mod.id, task.id) ? taskInlineEditHtml(mod.id, task) : `
                         <div class="task-row ${task.completed ? 'completed' : ''} ${task.skipped ? 'skipped' : ''}">
                           <div class="task-left">
                             <input type="checkbox" class="task-checkbox" data-mod-id="${esc(mod.id)}" data-task-id="${esc(task.id)}" ${task.completed ? 'checked' : ''} ${task.skipped ? 'disabled' : ''} />
@@ -814,6 +814,7 @@
                             </div>
                           </div>
                           <div class="task-actions">
+                            <button type="button" class="icon-btn edit-task-btn" title="Edit title and timeline" data-mod-id="${esc(mod.id)}" data-task-id="${esc(task.id)}">✎ Edit</button>
                             <button type="button" class="icon-btn skip-task-btn" title="Grey out / skip this task if not needed" data-mod-id="${esc(mod.id)}" data-task-id="${esc(task.id)}">
                               ${task.skipped ? 'Restore' : 'Skip / N/A'}
                             </button>
@@ -997,7 +998,93 @@
     });
   }
 
+  // ---- Checklist ordering and inline editing --------------------------------
+  // How far out a timeline label is, in days before the wedding (bigger = further out).
+  function timelineDaysOut(label) {
+    const s = String(label || '').toLowerCase();
+    if (s.includes('wedding week')) return 3;
+    const m = s.match(/(\d+)\s*(?:[–-]\s*(\d+))?\s*(\+)?\s*(month|week)/);
+    if (!m) return -1;
+    const unit = m[4] === 'month' ? 30 : 7;
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    return ((a + b) / 2) * unit + (m[3] ? 5 : 0);
+  }
+
+  // Sorted copy for display only; the stored order never changes. Ties keep their order.
+  function sortedTasks(tasks) {
+    const mode = (appState.meta && appState.meta.checklistSort) || 'default';
+    if (mode === 'default') return tasks;
+    const dir = mode === 'far' ? -1 : 1;
+    return tasks
+      .map((t, i) => ({ t, i, d: timelineDaysOut(t.timeline) }))
+      .sort((x, y) => (x.d - y.d) * dir || x.i - y.i)
+      .map((x) => x.t);
+  }
+
+  function setChecklistSort(value) {
+    appState.meta.checklistSort = value;
+    persistState();
+    renderAll();
+  }
+
+  let editingTask = null;
+  const isEditingTask = (modId, taskId) => !!editingTask && editingTask.modId === modId && editingTask.taskId === taskId;
+
+  function taskInlineEditHtml(modId, task) {
+    return `
+      <div class="task-row task-row-editing">
+        <div class="edit-row" data-mod-id="${esc(modId)}" data-task-id="${esc(task.id)}">
+          <input type="text" class="input task-edit-title" value="${esc(task.title)}" maxlength="200" aria-label="Task title" />
+          <select class="input edit-row-timeline task-edit-timeline" aria-label="Timeline">${timelineOptions(task.timeline)}</select>
+          <button type="button" class="btn btn-primary btn-sm task-edit-save">Save</button>
+          <button type="button" class="btn btn-secondary btn-sm task-edit-cancel">Cancel</button>
+        </div>
+      </div>`;
+  }
+
+  function saveInlineTaskEdit(row) {
+    const mod = appState.modules.find((m) => m.id === row.dataset.modId);
+    const task = mod && mod.checklist.find((t) => t.id === row.dataset.taskId);
+    if (task) {
+      task.title = row.querySelector('.task-edit-title').value.trim() || task.title;
+      task.timeline = row.querySelector('.task-edit-timeline').value;
+    }
+    editingTask = null;
+    persistState();
+    renderAll();
+    showToast('Task updated');
+  }
+
   function bindTaskRowEvents(scopeEl) {
+    scopeEl.querySelectorAll('.edit-task-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        editingTask = { modId: btn.dataset.modId, taskId: btn.dataset.taskId };
+        renderAll();
+        const input = document.querySelector('.task-edit-title');
+        if (input) input.focus();
+      });
+    });
+    scopeEl.querySelectorAll('.task-edit-save').forEach((btn) => {
+      btn.addEventListener('click', () => saveInlineTaskEdit(btn.closest('.edit-row')));
+    });
+    scopeEl.querySelectorAll('.task-edit-cancel').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        editingTask = null;
+        renderAll();
+      });
+    });
+    scopeEl.querySelectorAll('.task-edit-title').forEach((inp) => {
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveInlineTaskEdit(inp.closest('.edit-row'));
+        } else if (e.key === 'Escape') {
+          editingTask = null;
+          renderAll();
+        }
+      });
+    });
     scopeEl.querySelectorAll('.task-checkbox').forEach((chk) => {
       chk.addEventListener('change', (e) => {
         const mod = appState.modules.find((m) => m.id === e.target.dataset.modId);
@@ -1083,14 +1170,22 @@
     });
 
     const groups = {};
-    allTasks.forEach((item) => {
+    sortedTasks(allTasks).forEach((item) => {
       const key = groupMode === 'timeline' ? item.timeline : `${item.modIcon} ${item.modName}`;
       if (!groups[key]) groups[key] = [];
       groups[key].push(item);
     });
 
     const container = document.getElementById('masterChecklistContainer');
-    const groupKeys = Object.keys(groups);
+    let groupKeys = Object.keys(groups);
+    const sortMode = appState.meta.checklistSort || 'default';
+    if (groupMode === 'timeline' && sortMode !== 'default') {
+      const dir = sortMode === 'far' ? -1 : 1;
+      groupKeys = groupKeys
+        .map((k, i) => ({ k, i, d: timelineDaysOut(k) }))
+        .sort((x, y) => (x.d - y.d) * dir || x.i - y.i)
+        .map((x) => x.k);
+    }
 
     if (groupKeys.length === 0) {
       container.innerHTML = `<div class="card text-muted" style="text-align:center; padding:2.5rem;">No checklist tasks match your current filters.</div>`;
@@ -1109,7 +1204,7 @@
             <div class="checklist-items-stack">
               ${items
                 .map(
-                  (t) => `
+                  (t) => isEditingTask(t.modId, t.id) ? taskInlineEditHtml(t.modId, t) : `
                   <div class="task-row ${t.completed ? 'completed' : ''} ${t.effectivelySkipped ? 'skipped' : ''}">
                     <div class="task-left">
                       <input type="checkbox" class="task-checkbox" data-mod-id="${esc(t.modId)}" data-task-id="${esc(t.id)}" ${t.completed ? 'checked' : ''} ${t.effectivelySkipped ? 'disabled' : ''} />
@@ -1123,6 +1218,7 @@
                       </div>
                     </div>
                     <div class="task-actions">
+                      <button type="button" class="icon-btn edit-task-btn" title="Edit title and timeline" data-mod-id="${esc(t.modId)}" data-task-id="${esc(t.id)}">✎ Edit</button>
                       <button type="button" class="icon-btn skip-task-btn" data-mod-id="${esc(t.modId)}" data-task-id="${esc(t.id)}">
                         ${t.skipped ? 'Restore' : 'Skip / N/A'}
                       </button>
@@ -1330,6 +1426,10 @@
 
   function renderAll() {
     if (!appState) return;
+    const sortValue = appState.meta.checklistSort || 'default';
+    document.querySelectorAll('.checklist-sort-select').forEach((sel) => {
+      sel.value = sortValue;
+    });
     renderHeaderAndKpis();
     renderOverviewTab();
     renderModulesTab();
@@ -1340,6 +1440,9 @@
 
   function bindGlobalEvents() {
     bindModuleEditor();
+    document.querySelectorAll('.checklist-sort-select').forEach((sel) => {
+      sel.addEventListener('change', (e) => setChecklistSort(e.target.value));
+    });
 
     // Navigation buttons
     document.querySelectorAll('.nav-btn, .mob-nav-btn').forEach((btn) => {

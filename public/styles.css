@@ -1294,6 +1294,28 @@ textarea.input {
   cursor: default;
 }
 
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sort-row .input {
+  width: auto;
+}
+
+.task-row-editing {
+  background: var(--accent-gold-light);
+}
+
+.task-row-editing .edit-row {
+  flex: 1;
+  flex-wrap: wrap;
+}
+
 .modal-card-wide {
   max-width: 720px;
 }

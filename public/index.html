@@ -182,6 +182,14 @@
 
         <!-- Category Filter Pills -->
         <div class="filter-bar" id="moduleFilterBar"></div>
+        <div class="sort-row">
+          <label for="moduleChecklistSort">Checklist order</label>
+          <select id="moduleChecklistSort" class="input checklist-sort-select">
+            <option value="default">As entered</option>
+            <option value="far">Furthest out first</option>
+            <option value="near">Nearest first</option>
+          </select>
+        </div>
 
         <!-- Modules Detail Accordion / Cards -->
         <div class="modules-detail-list" id="modulesDetailList"></div>
@@ -206,6 +214,11 @@
               <option value="remaining">Remaining (To-Do)</option>
               <option value="completed">Completed</option>
               <option value="skipped">Greyed Out / Skipped</option>
+            </select>
+            <select id="checklistSortOrder" class="input checklist-sort-select" aria-label="Checklist order">
+              <option value="default">Order: as entered</option>
+              <option value="far">Order: furthest out first</option>
+              <option value="near">Order: nearest first</option>
             </select>
             <select id="checklistGroupMode" class="input">
               <option value="timeline">Group by Timeline Phase</option>
