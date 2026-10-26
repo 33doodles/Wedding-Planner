@@ -9,8 +9,22 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
+      # Strongly recommended: anyone who can reach the port can otherwise read and change the plan.
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      # Set to 1 when running behind one reverse proxy (Nginx Proxy Manager, Traefik, Caddy...).
+      - TRUST_PROXY=${TRUST_PROXY:-}
+      # First run only: "false" starts with a blank plan instead of the demo wedding.
+      - SEED_SAMPLE_DATA=${SEED_SAMPLE_DATA:-true}
     volumes:
       - wedding_data:/app/data
+    # Optional hardening; the app only writes to /app/data.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   wedding_data:

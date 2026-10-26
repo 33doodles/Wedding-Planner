@@ -1,6 +1,6 @@
 {
   "name": "vowcraft-wedding-planner",
-  "version": "0.9.0-beta",
+  "version": "0.9.1-beta",
   "description": "All-encapsulating modular wedding planning application with checklists, vendor worksheets, and invite lists",
   "main": "server.js",
   "scripts": {
@@ -8,7 +8,6 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "cors": "^2.8.5",
     "express": "^4.21.2"
   },
   "engines": {

@@ -1240,3 +1240,128 @@ textarea.input {
     display: block !important;
   }
 }
+
+/* ---------- Fork additions: login, module ordering ---------- */
+.hidden {
+  display: none !important;
+}
+
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--bg-cream);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  text-align: center;
+}
+
+.login-card .brand-logo {
+  margin: 0 auto;
+}
+
+.login-card h2 {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+}
+
+.login-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.mod-order-btns {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.mod-order-btns .icon-btn {
+  min-width: 2rem;
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sort-row .input {
+  width: auto;
+}
+
+.task-row-editing {
+  background: var(--accent-gold-light);
+}
+
+.task-row-editing .edit-row {
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.modal-card-wide {
+  max-width: 720px;
+}
+
+.edit-section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.edit-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.edit-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.edit-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-row .edit-row-timeline {
+  flex: 0 0 150px;
+}
+
+@media (max-width: 560px) {
+  .edit-row {
+    flex-wrap: wrap;
+  }
+  .edit-row .edit-row-timeline {
+    flex: 1 1 100%;
+  }
+}
+
+.mod-overview-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
